@@ -1,0 +1,50 @@
+# Dockerfile to debug CUDA GPG key issues
+# Mimics rocker's CUDA extension behavior and runs diagnostics at each stage
+# Usage: docker build --build-arg BASE_IMAGE=ubuntu:22.04 -f Dockerfile.debug-cuda -t cuda-debug .
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# CUDA keyring version (matching rocker's default)
+ARG CUDA_KEYRING_VERSION=1.1-1
+
+USER root
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Copy diagnostic script
+COPY debug-cuda-keys.sh /tmp/debug-cuda-keys.sh
+RUN chmod +x /tmp/debug-cuda-keys.sh
+
+# Install prerequisites (same as rocker)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget software-properties-common gnupg2 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# STAGE 1: Before CUDA Keyring Installation
+RUN echo "=== STAGE 1: Before CUDA Keyring Installation ===" && \
+    /tmp/debug-cuda-keys.sh
+
+# STAGE 2: Install CUDA keyring (exactly as rocker does)
+RUN echo "=== STAGE 2: Installing CUDA Keyring ===" && \
+    wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_${CUDA_KEYRING_VERSION}_all.deb && \
+    dpkg -i cuda-keyring_${CUDA_KEYRING_VERSION}_all.deb && \
+    rm cuda-keyring_${CUDA_KEYRING_VERSION}_all.deb && \
+    echo "CUDA keyring installed successfully"
+
+# STAGE 3: After CUDA Keyring Installation
+RUN echo "=== STAGE 3: After CUDA Keyring Installation ===" && \
+    /tmp/debug-cuda-keys.sh
+
+# STAGE 4: Testing apt-get update (where rocker fails)
+RUN echo "=== STAGE 4: Testing apt-get update ===" && \
+    apt-get update 2>&1 | tee /tmp/apt-update-output.log || \
+    (echo "apt-get update FAILED - analyzing error..." && \
+     cat /tmp/apt-update-output.log && \
+     /tmp/debug-cuda-keys.sh && \
+     exit 1)
+
+# STAGE 5: Final Diagnostics
+RUN echo "=== STAGE 5: Final Diagnostics ===" && \
+    /tmp/debug-cuda-keys.sh
+
+CMD ["/bin/bash", "-c", "echo 'Diagnostics complete. Run /tmp/debug-cuda-keys.sh for a fresh report.'"]
